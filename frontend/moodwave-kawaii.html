@@ -671,7 +671,10 @@ select:focus{border-color:#ff69b4;}
       <div id="auth-userbox" style="display:none;">
         <div class="auth-note">signed in as</div>
         <span class="user-pill" id="user-name">-</span>
+        <div class="auth-note" id="spotify-note" style="margin-top:5px;">spotify not connected</div>
         <div class="auth-actions">
+          <button class="gen-btn" id="spotify-connect-btn" onclick="connectSpotify()">connect spotify</button>
+          <button class="clr-btn" id="spotify-disconnect-btn" onclick="disconnectSpotify()" style="display:none;">disconnect spotify</button>
           <button class="clr-btn" onclick="logout()">logout</button>
         </div>
       </div>
@@ -929,6 +932,7 @@ document.getElementById('mood-input').addEventListener('keydown',e=>{
 <script>
 let currentUser=null;
 let savedPlaylists=[];
+let spotifyStatus={spotify_connected:false,spotify_display_name:null};
 
 async function appApi(path,opts={}){
   const r=await fetch(path,{
@@ -946,7 +950,10 @@ async function checkAuth(){
     const j=await appApi('/api/auth/me');
     currentUser=j.user;
     updateAuthUI();
-    if(currentUser)await loadHistory();
+    if(currentUser){
+      await loadSpotifyStatus();
+      await loadHistory();
+    }
   }catch(e){
     currentUser=null;
     updateAuthUI();
@@ -957,7 +964,57 @@ function updateAuthUI(){
   document.getElementById('auth-guest').style.display=currentUser?'none':'';
   document.getElementById('auth-userbox').style.display=currentUser?'':'none';
   document.getElementById('user-name').textContent=currentUser?currentUser.username:'-';
-  if(!currentUser)document.getElementById('history-list').textContent='log in to see ur saved playlists';
+  if(!currentUser){
+    spotifyStatus={spotify_connected:false,spotify_display_name:null};
+    document.getElementById('history-list').textContent='log in to see ur saved playlists';
+  }
+  updateSpotifyUI();
+}
+
+function updateSpotifyUI(){
+  const note=document.getElementById('spotify-note');
+  const connect=document.getElementById('spotify-connect-btn');
+  const disconnect=document.getElementById('spotify-disconnect-btn');
+  if(!note||!connect||!disconnect)return;
+
+  if(!currentUser){
+    note.textContent='spotify not connected';
+    connect.style.display='none';
+    disconnect.style.display='none';
+    return;
+  }
+
+  if(spotifyStatus.spotify_connected){
+    note.textContent='spotify connected: '+(spotifyStatus.spotify_display_name||'ready');
+    connect.style.display='none';
+    disconnect.style.display='';
+  }else{
+    note.textContent='connect spotify for playlists based on your listening';
+    connect.style.display='';
+    disconnect.style.display='none';
+  }
+}
+
+async function loadSpotifyStatus(){
+  if(!currentUser)return;
+  try{
+    spotifyStatus=await appApi('/api/spotify/status');
+  }catch(e){
+    spotifyStatus={spotify_connected:false,spotify_display_name:null};
+  }
+  updateSpotifyUI();
+}
+
+function connectSpotify(){
+  window.location.href='/api/spotify/login';
+}
+
+async function disconnectSpotify(){
+  try{
+    await appApi('/api/spotify/disconnect',{method:'POST',body:'{}'});
+    spotifyStatus={spotify_connected:false,spotify_display_name:null};
+    updateSpotifyUI();
+  }catch(e){showErr(e.message);}
 }
 
 async function authSubmit(mode){
@@ -969,6 +1026,7 @@ async function authSubmit(mode){
     currentUser=j.user;
     document.getElementById('auth-pass').value='';
     updateAuthUI();
+    await loadSpotifyStatus();
     await loadHistory();
     burst();
   }catch(e){showErr(e.message);}
@@ -978,6 +1036,7 @@ async function logout(){
   try{await appApi('/api/auth/logout',{method:'POST',body:'{}'});}catch(e){}
   currentUser=null;
   savedPlaylists=[];
+  spotifyStatus={spotify_connected:false,spotify_display_name:null};
   updateAuthUI();
   clearAll();
 }
@@ -1029,6 +1088,15 @@ document.getElementById('auth-pass').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();authSubmit('login');}
 });
 checkAuth();
+const spotifyParam=new URLSearchParams(window.location.search).get('spotify');
+if(spotifyParam==='connected'){
+  showErr('spotify connected !! your next playlist will use your listening taste');
+  window.history.replaceState({},document.title,'/');
+}
+if(spotifyParam==='error'){
+  showErr('spotify connection failed. check your redirect uri and try again');
+  window.history.replaceState({},document.title,'/');
+}
 </script>
 </body>
 </html>

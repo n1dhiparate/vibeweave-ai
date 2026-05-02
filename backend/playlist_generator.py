@@ -24,6 +24,11 @@ Rules:
 
 Return ONLY a valid JSON object. No markdown. No backticks. No explanation. No text before or after.
 
+User's Spotify listening profile:
+{spotify_profile}
+
+If the Spotify profile includes top tracks and artists, strongly prefer songs and artists from that profile when they fit the requested mood. You may include a few adjacent discoveries, but the playlist should feel like it belongs to this listener.
+
 {{
   "playlist_name": "short evocative name",
   "theme_description": "one sentence describing the overall feel",
@@ -74,17 +79,68 @@ FALLBACK_SONGS = {
 }
 
 
-def generate_fallback_playlist(mood, context, energy, intent):
+def _profile_tracks(spotify_profile):
+    if not spotify_profile:
+        return []
+
+    return [
+        (
+            track.get("title"),
+            track.get("artist"),
+            track.get("energy", "medium"),
+            track,
+        )
+        for track in spotify_profile.get("top_tracks", [])
+        if track.get("title") and track.get("artist")
+    ]
+
+
+def _spotify_profile_text(spotify_profile):
+    if not spotify_profile:
+        return "No Spotify profile connected."
+
+    tracks = spotify_profile.get("top_tracks", [])[:12]
+    artists = spotify_profile.get("top_artists", [])[:10]
+
+    track_lines = [
+        f"- {track.get('title')} by {track.get('artist')}"
+        for track in tracks
+    ]
+    artist_lines = [
+        f"- {artist.get('name')} ({', '.join(artist.get('genres', [])[:3])})"
+        for artist in artists
+    ]
+
+    return "\n".join([
+        "Top tracks:",
+        *track_lines,
+        "Top artists:",
+        *artist_lines,
+    ]).strip()
+
+
+def generate_fallback_playlist(mood, context, energy, intent, spotify_profile=None):
     energy_key = energy.lower() if energy.lower() in FALLBACK_SONGS else "medium"
     mood_words = [word.strip(".,!?").lower() for word in mood.split() if len(word) > 2]
     main_mood = mood_words[0] if mood_words else "mood"
+    profile_tracks = _profile_tracks(spotify_profile)
 
-    return {
-        "playlist_name": f"{main_mood.title()} {intent.title()} Mix",
-        "theme_description": f"A {energy_key}-energy {context} playlist for when you feel {mood}.",
-        "energy_curve": f"{energy_key} -> medium -> {energy_key}",
-        "tags": [context, energy_key, intent],
-        "songs": [
+    if profile_tracks:
+        songs = [
+            {
+                "title": title,
+                "artist": artist,
+                "energy": song_energy,
+                "reason": f"This comes from your Spotify taste and matches the {intent} mood.",
+                **{
+                    key: value for key, value in source.items()
+                    if key in ("spotify_url", "spotify_uri", "album_art")
+                }
+            }
+            for title, artist, song_energy, source in profile_tracks[:8]
+        ]
+    else:
+        songs = [
             {
                 "title": title,
                 "artist": artist,
@@ -93,13 +149,20 @@ def generate_fallback_playlist(mood, context, energy, intent):
             }
             for title, artist, song_energy in FALLBACK_SONGS[energy_key]
         ]
+
+    return {
+        "playlist_name": f"{main_mood.title()} {intent.title()} Mix",
+        "theme_description": f"A {energy_key}-energy {context} playlist for when you feel {mood}.",
+        "energy_curve": f"{energy_key} -> medium -> {energy_key}",
+        "tags": [context, energy_key, intent, "spotify taste" if profile_tracks else "fallback"],
+        "songs": songs
     }
 
 
-def generate_playlist(mood, context, energy, intent):
+def generate_playlist(mood, context, energy, intent, spotify_profile=None):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        return generate_fallback_playlist(mood, context, energy, intent)
+        return generate_fallback_playlist(mood, context, energy, intent, spotify_profile)
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -107,7 +170,8 @@ def generate_playlist(mood, context, energy, intent):
         mood=mood,
         context=context,
         energy=energy,
-        intent=intent
+        intent=intent,
+        spotify_profile=_spotify_profile_text(spotify_profile),
     )
 
     try:
@@ -120,7 +184,7 @@ def generate_playlist(mood, context, energy, intent):
         )
     except Exception as exc:
         print("Anthropic API unavailable, using fallback playlist:", str(exc))
-        return generate_fallback_playlist(mood, context, energy, intent)
+        return generate_fallback_playlist(mood, context, energy, intent, spotify_profile)
 
     raw = ""
 

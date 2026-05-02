@@ -1,5 +1,7 @@
 venv
 backend/data
 __pycache__
+backend/__pycache__
+api/__pycache__
 *.pyc
 .env

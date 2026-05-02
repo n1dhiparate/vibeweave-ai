@@ -6,16 +6,18 @@ import sqlite3
 import traceback
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file, session
+from flask import Flask, jsonify, request, send_file, send_from_directory, session
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from playlist_generator import generate_playlist
+from spotify_service import enrich_playlist_with_spotify
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_FILE = BASE_DIR.parents[0] / "frontend" / "moodwave-kawaii.html"
+ASSETS_DIR = BASE_DIR.parents[0] / "frontend" / "assets"
 DB_PATH = Path(os.getenv("DATABASE_PATH", BASE_DIR / "data" / "moodwave.sqlite3"))
 DATA_DIR = DB_PATH.parent
 
@@ -144,6 +146,11 @@ def frontend():
     return error_response("Frontend file not found", 404)
 
 
+@app.route("/assets/<path:filename>")
+def frontend_assets(filename):
+    return send_from_directory(ASSETS_DIR, filename)
+
+
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     data = read_json()
@@ -239,6 +246,7 @@ def generate():
         intent = str(data["intent"]).strip()
 
         playlist = normalize_playlist(generate_playlist(mood, context, energy, intent))
+        playlist = enrich_playlist_with_spotify(playlist)
 
         with get_db() as db:
             cursor = db.execute(

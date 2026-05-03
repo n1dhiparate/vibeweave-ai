@@ -240,8 +240,14 @@ def spotify_callback():
 
     try:
         user_id, expected_state = state.split("::", 1)
-        user = User.query.get(user_id)
-        if not user or user.spotify_auth_state != expected_state:
+        try:
+            user = User.query.get(user_id)
+        except Exception:
+            user = None
+        if not user:
+            return redirect(f"{FRONTEND_URL}/?spotify=error_user")
+
+        if user.spotify_auth_state and user.spotify_auth_state != expected_state:
             return redirect(f"{FRONTEND_URL}/?spotify=error_mismatch")
             
         # Clear the state

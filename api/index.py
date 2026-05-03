@@ -35,8 +35,16 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 # CORS setup for the React frontend
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
-# SQLAlchemy Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+# Database Configuration
+db_url = os.getenv('DATABASE_URL') or os.getenv('POSTGRES_URL')
+if not db_url:
+    print("WARNING: DATABASE_URL is missing. Using in-memory SQLite.", file=sys.stderr)
+    db_url = "sqlite:///:memory:"
+elif db_url.startswith("postgres://"):
+    # SQLAlchemy requires postgresql:// instead of postgres://
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -45,9 +53,10 @@ db.init_app(app)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Missing Supabase credentials in .env")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("WARNING: Missing Supabase credentials in .env", file=sys.stderr)
+    supabase = None
+else:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Ensure tables exist
 with app.app_context():

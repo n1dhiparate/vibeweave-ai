@@ -1,5 +1,5 @@
 from app import app, db
-from models import User
+
 from playlist_generator import generate_playlist
 from spotify_service import build_listening_profile
 

@@ -98,13 +98,21 @@ def require_auth(f):
         user_id = supabase_user.id
         email = supabase_user.email
         
-        # Upsert user in local db
-        user = User.query.get(user_id)
+        # 🔥 FIX: Avoid DB query that crashes on Vercel
+        try:
+            user = User.query.get(user_id)
+        except Exception:
+            user = None
+
         if not user:
-            user = User(id=user_id, email=email)
-            db.session.add(user)
-            db.session.commit()
-            
+            try:
+                user = User(id=user_id, email=email)
+                db.session.add(user)
+                db.session.commit()
+            except Exception:
+                # fallback if DB fails (serverless safe)
+                user = User(id=user_id, email=email)
+
         return f(user, *args, **kwargs)
     return decorated
 

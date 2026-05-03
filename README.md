@@ -1,54 +1,69 @@
-<div align="center">
+﻿<div align="center">
   <img src="./public/assets/headphones.png" alt="Moodwave Logo" width="120" />
   <h1>✿ Moodwave ✿</h1>
-  <p><strong>An AI-powered, full-stack playlist curator that matches your exact vibe using your personal Spotify library.</strong></p>
+  <p><strong>An AI-powered playlist curator that creates mood-driven Spotify playlists from your own library.</strong></p>
 
+  [![Live Demo](https://img.shields.io/badge/Live-vibeweave--ai.vercel.app-blue?style=for-the-badge&logo=vercel&logoColor=white)](https://vibeweave-ai.vercel.app/)
   [![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)](https://vitejs.dev/)
   [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
   [![Flask](https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-  [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
   [![Supabase](https://img.shields.io/badge/Supabase-181818?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 </div>
 
 <br />
 
-## 🎵 Overview
+## Overview
 
-**Moodwave** is a full-stack web application designed to eliminate the friction of music curation. By leveraging the **Spotify API** and advanced **Groq Large Language Models (LLM)**, Moodwave analyzes a user's explicit intent, energy level, and mood, and curates a customized playlist drawn **exclusively** from their own saved Spotify library. 
+Moodwave is a full-stack web experience that turns your Spotify mood and intent into a smart playlist built from your own saved tracks.
 
-This ensures that the AI never hallucinates unknown tracks, delivering a highly personalized listening experience wrapped in a nostalgic Y2K/Kawaii aesthetic.
+The app uses:
+- Spotify saved tracks and top tracks as the curated pool
+- Supabase authentication to secure user sessions
+- Groq LLM prompt guidance to keep playlist suggestions strictly within the user’s library
+- A Vite + React frontend for fast, interactive UI
+- A Flask-based Python backend that runs on Vercel serverless functions
 
-## ✨ Key Features
+## Live Demo
 
-- **Strict AI Curation Strategy:** Powered by LLaMA-3.3 (via Groq), the prompt engineering explicitly restricts the LLM to only select tracks from the authenticated user's Spotify library (Top Tracks + Liked Tracks).
-- **Secure Authentication:** Implements JWT-based authentication using **Supabase GoTrue Auth**, ensuring user sessions and Spotify tokens are securely managed.
-- **Dynamic React SPA:** A highly responsive frontend built with Vite and React, featuring custom CSS animations, real-time feedback, and dynamic state management without full-page reloads.
-- **Serverless Architecture Ready:** The monolithic Flask application is configured for seamless deployment on Vercel as Serverless Python Functions, complete with API routing rewrites.
-- **Persistent Data:** Playlists and user metadata are stored securely in a Supabase-hosted **PostgreSQL** database using SQLAlchemy ORM.
+Visit the live app here:
 
-## 🛠️ Architecture & Tech Stack
-
-### Frontend
-- **Framework:** React 18, Vite
-- **Styling:** Custom Vanilla CSS (Keyframe Animations, Variables, Responsive Grid)
-- **State Management:** React Hooks (`useState`, `useEffect`)
-- **API Client:** Fetch API with JWT Bearer authorization
-
-### Backend
-- **Framework:** Python, Flask
-- **Database ORM:** Flask-SQLAlchemy
-- **Authentication:** `@supabase/supabase-js` (Frontend) & `python-jose` (Backend validation)
-- **AI Integration:** Groq SDK (`llama-3.3-70b-versatile`)
-- **External APIs:** Spotify Web API (OAuth 2.0 Auth Code Flow)
+- https://vibeweave-ai.vercel.app/
+- [Open Moodwave live](https://vibeweave-ai.vercel.app/)
 
 ---
 
-## 🚀 Local Development Setup
+## What Makes Moodwave Different
 
-To run this project locally, you will need two terminal windows running concurrently.
+- Personalized playlist curation from your own Spotify library
+- Mood, energy, and intent input for more precise results
+- No hallucinated tracks because the AI is forced to choose only from authenticated user data
+- Clean serverless deployment via Vercel with API routing from `vercel.json`
+- Modern React UI with smooth interactions and responsive visual polish
 
-### 1. Environment Variables
-Create a `.env` file at the root of the project with the following keys:
+---
+
+## Tech Stack
+
+### Frontend
+- React 19, Vite 8
+- `@supabase/supabase-js` for authentication and user session handling
+- Responsive layouts and CSS animations
+
+### Backend
+- Python 3, Flask
+- Flask-CORS for cross-origin requests
+- Flask-SQLAlchemy for data persistence
+- Supabase Python client for auth and database access
+- Groq SDK for AI playlist generation
+- Spotify Web API OAuth 2.0
+
+---
+
+## Local Development
+
+### 1. Create environment variables
+Create a `.env` file at the project root with:
+
 ```env
 # Frontend
 VITE_SUPABASE_URL=your_supabase_url
@@ -60,41 +75,63 @@ SUPABASE_URL=your_supabase_url
 SUPABASE_KEY=your_supabase_service_key
 DATABASE_URL=postgresql://postgres:password@db.../postgres
 GROQ_API_KEY=gsk_your_groq_key
-SPOTIFY_CLIENT_ID=your_spotify_id
-SPOTIFY_CLIENT_SECRET=your_spotify_secret
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:5000/api/spotify/callback
+FRONTEND_URL=http://localhost:5173
 ```
 
-### 2. Run the Backend (Flask)
+### 2. Start the backend
+
 ```bash
+cd api
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-python backend/app.py
+venv\Scripts\activate   # Windows
+# source venv/bin/activate  # macOS / Linux
+pip install -r ../requirements.txt
+python index.py
 ```
 
-### 3. Run the Frontend (React / Vite)
+### 3. Start the frontend
+
 ```bash
+cd ..
 npm install
 npm run dev
 ```
-The application will be available at `http://localhost:5173`.
+
+Open `http://localhost:5173` to use Moodwave locally.
 
 ---
 
-## ☁️ Deployment (Vercel)
+## Deployment to Vercel
 
-This repository is structured as a Vercel-compatible monorepo. 
+This repository is configured for Vercel with the following deployment setup:
 
-1. Push the code to GitHub.
-2. Import the project into Vercel.
-3. Vercel will automatically detect **Vite** for the frontend build.
-4. Add all environment variables in the Vercel Dashboard.
-5. The `vercel.json` file automatically routes all `/api/*` traffic to the Python Serverless Functions.
+- `vercel.json` rewrites `/api/*` requests to `api/index.py`
+- the React frontend is served from `index.html`
 
-*Note: Remember to update your Spotify Developer Dashboard to include your live Vercel URL (e.g., `https://vibeweave-ai.vercel.app/api/spotify/callback`).*
+### Deployment steps
+1. Push your repository to GitHub.
+2. Import it into Vercel.
+3. Confirm Vercel detects the Vite frontend.
+4. Add all required environment variables in Vercel.
+5. Set your Spotify callback URI to:
+   `https://vibeweave-ai.vercel.app/api/spotify/callback`
 
 ---
+
+## Project Structure
+
+- `api/` — Flask backend, Spotify auth, playlist generation, Supabase integration
+- `src/` — React frontend source code
+- `public/` — static assets and HTML entrypoint
+- `vercel.json` — Vercel rewrite configuration
+- `package.json` — frontend scripts and dependencies
+- `requirements.txt` — backend dependencies
+
+---
+
 <div align="center">
   <p>Made with ♥ by Nidhi Parate</p>
 </div>

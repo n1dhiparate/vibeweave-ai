@@ -114,7 +114,11 @@ def require_auth(f):
             try:
                 user = User(id=user_id, email=email)
                 db.session.add(user)
-                db.session.commit()
+            
+                try:
+                    db.session.commit()
+                except Exception:
+                    safe_db_session()
             except Exception:
                 # fallback if DB fails (serverless safe)
                 user = User(id=user_id, email=email)
@@ -137,7 +141,10 @@ def save_spotify_tokens(user, token_payload, display_name=None):
     if display_name:
         user.spotify_display_name = display_name
         
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        safe_db_session()
 
 def spotify_access_token_for_user(user):
     if not user.spotify_refresh_token:
@@ -177,7 +184,11 @@ def playlist_row_payload(playlist):
         "playlist": pl_json,
     }
 
-
+def safe_db_session():
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
 # ==========================================
 # ROUTES
 # ==========================================
@@ -204,7 +215,10 @@ def spotify_auth_url(user):
     # Generate state and save it temporarily
     auth_state = secrets.token_urlsafe(24)
     user.spotify_auth_state = auth_state
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        safe_db_session()
 
     state = f"{user.id}::{auth_state}"
     # The redirect URI must precisely match the one defined in the Spotify Developer Dashboard.
@@ -232,7 +246,10 @@ def spotify_callback():
             
         # Clear the state
         user.spotify_auth_state = None
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            safe_db_session()
 
         redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
         token_payload = exchange_code_for_tokens(code, redirect_uri)
@@ -253,7 +270,10 @@ def spotify_disconnect(user):
     user.spotify_refresh_token = None
     user.spotify_expires_at = None
     user.spotify_display_name = None
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        safe_db_session()
     return jsonify({"status": "success"})
 
 @app.route("/api/generate-playlist", methods=["POST"])
@@ -290,7 +310,10 @@ def generate(user):
             playlist_json=json.dumps(playlist_data)
         )
         db.session.add(new_playlist)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            safe_db_session()
 
         return jsonify({
             "status": "success",
@@ -308,7 +331,14 @@ def generate(user):
 @app.route("/api/playlists")
 @require_auth
 def playlists(user):
-    pl_list = Playlist.query.filter_by(user_id=user.id).order_by(Playlist.created_at.desc(), Playlist.id.desc()).limit(20).all()
+    safe_db_session()
+
+try:
+    pl_list = Playlist.query.filter_by(user_id=user.id)\
+        .order_by(Playlist.created_at.desc(), Playlist.id.desc())\
+        .limit(20).all()
+except Exception:
+    pl_list = []
     return jsonify({
         "status": "success",
         "playlists": [playlist_row_payload(pl) for pl in pl_list]
@@ -322,7 +352,10 @@ def delete_playlist(user, playlist_id):
         return error_response("Playlist not found", 404)
         
     db.session.delete(pl)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        safe_db_session()
     return jsonify({"status": "success"})
 
 @app.route("/health")

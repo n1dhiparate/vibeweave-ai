@@ -58,9 +58,16 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 else:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Ensure tables exist
-with app.app_context():
-    db.create_all()
+# Ensure tables exist lazily
+@app.before_request
+def init_db():
+    if getattr(app, '_database_initialized', False):
+        return
+    try:
+        db.create_all()
+    except Exception as e:
+        print("WARNING: Database creation failed:", str(e), file=sys.stderr)
+    app._database_initialized = True
 
 def error_response(message, status_code):
     return jsonify({"status": "error", "message": message}), status_code

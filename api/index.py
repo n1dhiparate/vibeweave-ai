@@ -352,11 +352,13 @@ def delete_playlist(user, playlist_id):
         return error_response("Playlist not found", 404)
         
     db.session.delete(pl)
+    
     try:
         db.session.commit()
     except Exception:
         safe_db_session()
-    return jsonify({"status": "success"})
+
+    return jsonify({"status": "success"}) 
 
 @app.route("/health")
 def health():

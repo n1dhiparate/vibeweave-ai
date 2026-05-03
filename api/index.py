@@ -7,13 +7,12 @@ import time
 import traceback
 from pathlib import Path
 
-# Vercel Serverless pathing fix
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
-from supabase import create_client, Client
+from supabase import create_client
 
 from models import db, User, Playlist
 from playlist_generator import generate_playlist
@@ -31,17 +30,14 @@ load_dotenv(override=True)
 app = Flask(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
-# CORS setup for the React frontend
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
 
-# Database Configuration
+# ================= DB =================
 db_url = os.getenv('DATABASE_URL') or os.getenv('POSTGRES_URL')
+
 if not db_url:
-    print("WARNING: DATABASE_URL is missing. Using in-memory SQLite.", file=sys.stderr)
     db_url = "sqlite:///:memory:"
 elif db_url.startswith("postgres://"):
-    # SQLAlchemy requires postgresql:// instead of postgres://
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
@@ -49,34 +45,21 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
-# Supabase Client
+# ================= SUPABASE =================
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("WARNING: Missing Supabase credentials in .env", file=sys.stderr)
-    supabase = None
-else:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Ensure tables exist lazily
-@app.before_request
-def init_db():
-    if getattr(app, '_database_initialized', False):
-        return
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
-    # 🔥 FIX: Skip DB init in serverless (Vercel)
-    if os.getenv("VERCEL"):
-        app._database_initialized = True
-        return
-
+# ================= UTILS =================
+def safe_db_session():
     try:
-        db.create_all()
-    except Exception as e:
-        print("WARNING: Database creation failed:", str(e), file=sys.stderr)
+        db.session.rollback()
+    except Exception:
+        pass
 
-    app._database_initialized = True
-def error_response(message, status_code):
-    return jsonify({"status": "error", "message": message}), status_code
+def error_response(msg, code):
+    return jsonify({"status": "error", "message": msg}), code
 
 def read_json():
     data = request.get_json(silent=True)
@@ -84,175 +67,83 @@ def read_json():
         data = json.loads(data)
     return data if isinstance(data, dict) else None
 
+# ================= AUTH =================
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            return error_response("Missing or invalid authorization header", 401)
-        
+            return error_response("Missing auth", 401)
+
         token = auth_header.split(" ")[1]
+
         try:
             user_res = supabase.auth.get_user(token)
             supabase_user = user_res.user
-        except Exception as e:
-            return error_response(f"Unauthorized: {str(e)}", 401)
-            
+        except Exception:
+            return error_response("Unauthorized", 401)
+
         if not supabase_user:
             return error_response("Unauthorized", 401)
-            
-        user_id = supabase_user.id
-        email = supabase_user.email
-        
-        # 🔥 FIX: Avoid DB query that crashes on Vercel
-        user = None
-        try:
-             user = User.query.get(user_id)
-        except Exception:
-             pass
 
-        if not user:
-            try:
-                user = User(id=user_id, email=email)
-                db.session.add(user)
-            
-                try:
-                    db.session.commit()
-                except Exception:
-                    safe_db_session()
-            except Exception:
-                # fallback if DB fails (serverless safe)
-                user = User(id=user_id, email=email)
-
+        user = User(id=supabase_user.id, email=supabase_user.email)
         return f(user, *args, **kwargs)
+
     return decorated
 
+# ================= SPOTIFY TOKEN SAVE =================
 def save_spotify_tokens(user, token_payload, display_name=None):
-    expires_at = int(time.time()) + int(token_payload.get("expires_in", 3600))
-    access_token = token_payload.get("access_token")
-    refresh_token = token_payload.get("refresh_token")
-
-    if not access_token:
-        return
-
-    # 🔥 NEW: save via Supabase (serverless-safe)
     try:
         supabase.table("users").update({
-            "spotify_access_token": access_token,
-            "spotify_refresh_token": refresh_token,
-            "spotify_expires_at": expires_at,
+            "spotify_access_token": token_payload.get("access_token"),
+            "spotify_refresh_token": token_payload.get("refresh_token"),
             "spotify_display_name": display_name
         }).eq("id", user.id).execute()
-    except Exception as e:
-        print("Supabase save failed:", str(e))
-
-    # keep local object updated (optional, no DB commit needed)
-    user.spotify_access_token = access_token
-    user.spotify_expires_at = expires_at
-    if refresh_token:
-        user.spotify_refresh_token = refresh_token
-    if display_name:
-        user.spotify_display_name = display_name
-    try:
-        db.session.commit()
-    except Exception:
-        safe_db_session()
-
-def spotify_access_token_for_user(user):
-    if not user.spotify_refresh_token:
-        return None
-
-    if user.spotify_access_token and (user.spotify_expires_at or 0) > time.time() + 60:
-        return user.spotify_access_token
-
-    try:
-        refreshed = refresh_user_token(user.spotify_refresh_token)
-    except Exception as exc:
-        print("Spotify refresh failed:", str(exc))
-        return None
-
-    save_spotify_tokens(user, refreshed)
-    return refreshed.get("access_token")
-
-def listening_profile_for_user(user):
-    access_token = spotify_access_token_for_user(user)
-    if not access_token:
-        return None
-    try:
-        return build_listening_profile(access_token)
-    except Exception as exc:
-        print("Spotify listening profile failed:", str(exc))
-        return None
-
-def playlist_row_payload(playlist):
-    pl_json = json.loads(playlist.playlist_json) if isinstance(playlist.playlist_json, str) else playlist.playlist_json
-    return {
-        "id": playlist.id,
-        "mood": playlist.mood,
-        "context": playlist.context,
-        "energy": playlist.energy,
-        "intent": playlist.intent,
-        "created_at": playlist.created_at.isoformat() if playlist.created_at else None,
-        "playlist": pl_json,
-    }
-
-def safe_db_session():
-    try:
-        db.session.rollback()
     except Exception:
         pass
-# ==========================================
-# ROUTES
-# ==========================================
+
+# ================= ROUTES =================
 
 @app.route("/api/auth/me")
 @require_auth
 def me(user):
     spotify_connected = False
-spotify_display_name = None
+    spotify_display_name = None
 
-try:
-    res = supabase.table("users").select(
-        "spotify_refresh_token, spotify_display_name"
-    ).eq("id", user.id).single().execute()
+    try:
+        res = supabase.table("users").select(
+            "spotify_refresh_token, spotify_display_name"
+        ).eq("id", user.id).single().execute()
 
-    data = res.data
-    if data:
-        spotify_connected = bool(data.get("spotify_refresh_token"))
-        spotify_display_name = data.get("spotify_display_name")
-except Exception:
-    pass
+        if res.data:
+            spotify_connected = bool(res.data.get("spotify_refresh_token"))
+            spotify_display_name = res.data.get("spotify_display_name")
+    except Exception:
+        pass
 
-return jsonify({
-    "status": "success",
-    "user": {
-        "id": user.id,
-        "email": user.email,
-        "spotify_connected": spotify_connected,
-        "spotify_display_name": spotify_display_name,
-    }
-})
+    return jsonify({
+        "status": "success",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "spotify_connected": spotify_connected,
+            "spotify_display_name": spotify_display_name
+        }
+    })
+
 
 @app.route("/api/spotify/auth-url")
 @require_auth
 def spotify_auth_url(user):
     if not spotify_is_configured():
-        return error_response("Spotify credentials are not configured", 400)
+        return error_response("Spotify not configured", 400)
 
-    # Generate state and save it temporarily
-    auth_state = secrets.token_urlsafe(24)
-    user.spotify_auth_state = auth_state
-    try:
-        db.session.commit()
-    except Exception:
-        safe_db_session()
+    state = f"{user.id}::{secrets.token_urlsafe(16)}"
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
 
-    state = f"{user.id}::{auth_state}"
-    # The redirect URI must precisely match the one defined in the Spotify Developer Dashboard.
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
-    auth_url = build_spotify_auth_url(redirect_uri, state)
+    url = build_spotify_auth_url(redirect_uri, state)
+    return jsonify({"status": "success", "url": url})
 
-    return jsonify({"status": "success", "url": auth_url})
 
 @app.route("/api/spotify/callback")
 def spotify_callback():
@@ -261,172 +152,72 @@ def spotify_callback():
 
     state = request.args.get("state")
     code = request.args.get("code")
-    
+
     if not state or not code:
         return redirect(f"{FRONTEND_URL}/?spotify=error_state")
 
     try:
-        user_id, expected_state = state.split("::", 1)
+        user_id, _ = state.split("::", 1)
 
-        user = None
-        try:
-            user = User.query.get(user_id)
-        except Exception:
-            pass
-
-        if not user:
-    # allow OAuth to complete even if DB unavailable
-            redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
-
-            token_payload = exchange_code_for_tokens(code, redirect_uri)
-
-    # optional profile fetch (safe)
-            try:
-                profile = get_spotify_profile(token_payload["access_token"])
-            except Exception:
-                profile = None
-
-            return redirect(f"{FRONTEND_URL}/?spotify=connected")
-
-        if user.spotify_auth_state and user.spotify_auth_state != expected_state:
-            return redirect(f"{FRONTEND_URL}/?spotify=error_mismatch")
-            
-        # 🔥 SAFE CLEAR STATE
-        try:
-            user.spotify_auth_state = None
-            try:
-                db.session.commit()
-            except Exception:
-                safe_db_session()
-        except Exception:
-            pass
-
-        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
+        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
 
         token_payload = exchange_code_for_tokens(code, redirect_uri)
+
+        display_name = None
         try:
             profile = get_spotify_profile(token_payload["access_token"])
-        except Exception:
-            profile = None
             display_name = profile.get("display_name") or profile.get("id")
+        except Exception:
+            pass
 
-            try:
-                save_spotify_tokens(user, token_payload, display_name)
-            except Exception:
-                pass
-        
+        user = User(id=user_id)
+        save_spotify_tokens(user, token_payload, display_name)
+
         return redirect(f"{FRONTEND_URL}/?spotify=connected")
 
-    except Exception as exc:
-        print("Spotify callback failed:", str(exc))
+    except Exception as e:
+        print("Spotify error:", str(e))
         traceback.print_exc()
         return redirect(f"{FRONTEND_URL}/?spotify=error_catch")
 
-@app.route("/api/spotify/disconnect", methods=["POST"])
-@require_auth
-def spotify_disconnect(user):
-    user.spotify_access_token = None
-    user.spotify_refresh_token = None
-    user.spotify_expires_at = None
-    user.spotify_display_name = None
-    try:
-        db.session.commit()
-    except Exception:
-        safe_db_session()
-    return jsonify({"status": "success"})
 
 @app.route("/api/generate-playlist", methods=["POST"])
 @require_auth
 def generate(user):
+    data = read_json()
+    if not data:
+        return error_response("Invalid JSON", 400)
+
+    spotify_profile = None
     try:
-        data = read_json()
-        if data is None:
-            return error_response("Request body must be JSON", 400)
+        res = supabase.table("users").select(
+            "spotify_access_token"
+        ).eq("id", user.id).single().execute()
 
-        required_fields = ["mood", "context", "energy", "intent"]
-        for field in required_fields:
-            if not str(data.get(field, "")).strip():
-                return error_response(f"Missing field: {field}", 400)
-
-        mood = str(data["mood"]).strip()
-        context = str(data["context"]).strip()
-        energy = str(data["energy"]).strip()
-        intent = str(data["intent"]).strip()
-
-        spotify_profile = listening_profile_for_user(user)
-        if not spotify_profile:
-            return error_response("You must connect your Spotify account first.", 403)
-
-        playlist_data = generate_playlist(mood, context, energy, intent, spotify_profile)
-
-        # Save to database
-        new_playlist = Playlist(
-            user_id=user.id,
-            mood=mood,
-            context=context,
-            energy=energy,
-            intent=intent,
-            playlist_json=json.dumps(playlist_data)
-        )
-        db.session.add(new_playlist)
-        try:
-            db.session.commit()
-        except Exception:
-            safe_db_session()
-
-        return jsonify({
-            "status": "success",
-            "playlist": playlist_data,
-            "saved_id": new_playlist.id
-        }), 200
-
-    except ValueError as ve:
-        return error_response(str(ve), 400)
-    except Exception as exc:
-        print("ERROR:", str(exc))
-        traceback.print_exc()
-        return error_response("Playlist generation failed. Try again in a moment.", 500)
-
-@app.route("/api/playlists")
-@require_auth
-def playlists(user):
-    safe_db_session()
-
-    try:
-        pl_list = Playlist.query.filter_by(user_id=user.id)\
-            .order_by(Playlist.created_at.desc(), Playlist.id.desc())\
-            .limit(20).all()
+        token = res.data.get("spotify_access_token")
+        if token:
+            spotify_profile = build_listening_profile(token)
     except Exception:
-        pl_list = []
+        pass
 
-    return jsonify({
-        "status": "success",
-        "playlists": [playlist_row_payload(pl) for pl in pl_list]
-    })
+    if not spotify_profile:
+        return error_response("Connect Spotify first", 403)
 
-@app.route("/api/playlists/<int:playlist_id>", methods=["DELETE"])
-@require_auth
-def delete_playlist(user, playlist_id):
-    pl = Playlist.query.filter_by(id=playlist_id, user_id=user.id).first()
-    if not pl:
-        return error_response("Playlist not found", 404)
-        
-    db.session.delete(pl)
-    
-    try:
-        db.session.commit()
-    except Exception:
-        safe_db_session()
+    playlist = generate_playlist(
+        data["mood"],
+        data["context"],
+        data["energy"],
+        data["intent"],
+        spotify_profile
+    )
 
-    return jsonify({"status": "success"}) 
+    return jsonify({"status": "success", "playlist": playlist})
+
 
 @app.route("/health")
 def health():
-    return jsonify({
-        "status": "running",
-        "message": "Moodwave API is live"
-    })
+    return jsonify({"status": "running"})
+
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=os.getenv("FLASK_DEBUG") == "1")
+    app.run(debug=True)

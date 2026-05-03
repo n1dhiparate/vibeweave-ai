@@ -2,8 +2,13 @@ from functools import wraps
 import json
 import os
 import secrets
+import sys
 import time
 import traceback
+from pathlib import Path
+
+# Vercel Serverless pathing fix
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, redirect

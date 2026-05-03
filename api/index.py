@@ -333,12 +333,13 @@ def generate(user):
 def playlists(user):
     safe_db_session()
 
-try:
-    pl_list = Playlist.query.filter_by(user_id=user.id)\
-        .order_by(Playlist.created_at.desc(), Playlist.id.desc())\
-        .limit(20).all()
-except Exception:
-    pl_list = []
+    try:
+        pl_list = Playlist.query.filter_by(user_id=user.id)\
+            .order_by(Playlist.created_at.desc(), Playlist.id.desc())\
+            .limit(20).all()
+    except Exception:
+        pl_list = []
+
     return jsonify({
         "status": "success",
         "playlists": [playlist_row_payload(pl) for pl in pl_list]

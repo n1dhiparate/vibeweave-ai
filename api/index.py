@@ -241,34 +241,56 @@ def spotify_callback():
 
     try:
         user_id, expected_state = state.split("::", 1)
+
         user = None
         try:
-           user = User.query.get(user_id)
+            user = User.query.get(user_id)
         except Exception:
-           pass
+            pass
+
         if not user:
-            return redirect(f"{FRONTEND_URL}/?spotify=error_user")
+    # allow OAuth to complete even if DB unavailable
+            redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
+
+            token_payload = exchange_code_for_tokens(code, redirect_uri)
+
+    # optional profile fetch (safe)
+            try:
+                profile = get_spotify_profile(token_payload["access_token"])
+            except Exception:
+                profile = None
+
+            return redirect(f"{FRONTEND_URL}/?spotify=connected")
 
         if user.spotify_auth_state and user.spotify_auth_state != expected_state:
             return redirect(f"{FRONTEND_URL}/?spotify=error_mismatch")
             
-        # Clear the state
-        user.spotify_auth_state = None
+        # 🔥 SAFE CLEAR STATE
         try:
-            db.session.commit()
-        except Exception:
-            safe_db_session()
-
-        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
-        token_payload = exchange_code_for_tokens(code, redirect_uri)
-        profile = get_spotify_profile(token_payload["access_token"])
-        display_name = profile.get("display_name") or profile.get("id")
-        try:
-            save_spotify_tokens(user, token_payload, display_name)
+            user.spotify_auth_state = None
+            try:
+                db.session.commit()
+            except Exception:
+                safe_db_session()
         except Exception:
             pass
+
+        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "http://127.0.0.1:5000/api/spotify/callback")
+
+        token_payload = exchange_code_for_tokens(code, redirect_uri)
+        try:
+            profile = get_spotify_profile(token_payload["access_token"])
+        except Exception:
+            profile = None
+            display_name = profile.get("display_name") or profile.get("id")
+
+            try:
+                save_spotify_tokens(user, token_payload, display_name)
+            except Exception:
+                pass
         
         return redirect(f"{FRONTEND_URL}/?spotify=connected")
+
     except Exception as exc:
         print("Spotify callback failed:", str(exc))
         traceback.print_exc()

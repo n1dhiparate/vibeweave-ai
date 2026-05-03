@@ -105,10 +105,11 @@ def require_auth(f):
         email = supabase_user.email
         
         # 🔥 FIX: Avoid DB query that crashes on Vercel
+        user = None
         try:
-            user = User.query.get(user_id)
+             user = User.query.get(user_id)
         except Exception:
-            user = None
+             pass
 
         if not user:
             try:
@@ -240,10 +241,11 @@ def spotify_callback():
 
     try:
         user_id, expected_state = state.split("::", 1)
+        user = None
         try:
-            user = User.query.get(user_id)
+           user = User.query.get(user_id)
         except Exception:
-            user = None
+           pass
         if not user:
             return redirect(f"{FRONTEND_URL}/?spotify=error_user")
 
@@ -261,7 +263,10 @@ def spotify_callback():
         token_payload = exchange_code_for_tokens(code, redirect_uri)
         profile = get_spotify_profile(token_payload["access_token"])
         display_name = profile.get("display_name") or profile.get("id")
-        save_spotify_tokens(user, token_payload, display_name)
+        try:
+            save_spotify_tokens(user, token_payload, display_name)
+        except Exception:
+            pass
         
         return redirect(f"{FRONTEND_URL}/?spotify=connected")
     except Exception as exc:

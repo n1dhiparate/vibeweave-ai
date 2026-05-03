@@ -63,12 +63,18 @@ else:
 def init_db():
     if getattr(app, '_database_initialized', False):
         return
+
+    # 🔥 FIX: Skip DB init in serverless (Vercel)
+    if os.getenv("VERCEL"):
+        app._database_initialized = True
+        return
+
     try:
         db.create_all()
     except Exception as e:
         print("WARNING: Database creation failed:", str(e), file=sys.stderr)
-    app._database_initialized = True
 
+    app._database_initialized = True
 def error_response(message, status_code):
     return jsonify({"status": "error", "message": message}), status_code
 

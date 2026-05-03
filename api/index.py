@@ -135,13 +135,24 @@ def save_spotify_tokens(user, token_payload, display_name=None):
     if not access_token:
         return
 
+    # 🔥 NEW: save via Supabase (serverless-safe)
+    try:
+        supabase.table("users").update({
+            "spotify_access_token": access_token,
+            "spotify_refresh_token": refresh_token,
+            "spotify_expires_at": expires_at,
+            "spotify_display_name": display_name
+        }).eq("id", user.id).execute()
+    except Exception as e:
+        print("Supabase save failed:", str(e))
+
+    # keep local object updated (optional, no DB commit needed)
     user.spotify_access_token = access_token
     user.spotify_expires_at = expires_at
     if refresh_token:
         user.spotify_refresh_token = refresh_token
     if display_name:
         user.spotify_display_name = display_name
-        
     try:
         db.session.commit()
     except Exception:
@@ -197,15 +208,30 @@ def safe_db_session():
 @app.route("/api/auth/me")
 @require_auth
 def me(user):
-    return jsonify({
-        "status": "success",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "spotify_connected": bool(user.spotify_refresh_token),
-            "spotify_display_name": user.spotify_display_name,
-        }
-    })
+    spotify_connected = False
+spotify_display_name = None
+
+try:
+    res = supabase.table("users").select(
+        "spotify_refresh_token, spotify_display_name"
+    ).eq("id", user.id).single().execute()
+
+    data = res.data
+    if data:
+        spotify_connected = bool(data.get("spotify_refresh_token"))
+        spotify_display_name = data.get("spotify_display_name")
+except Exception:
+    pass
+
+return jsonify({
+    "status": "success",
+    "user": {
+        "id": user.id,
+        "email": user.email,
+        "spotify_connected": spotify_connected,
+        "spotify_display_name": spotify_display_name,
+    }
+})
 
 @app.route("/api/spotify/auth-url")
 @require_auth

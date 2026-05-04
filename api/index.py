@@ -29,8 +29,19 @@ load_dotenv(override=True)
 
 app = Flask(__name__)
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+frontend_url = os.getenv("FRONTEND_URL")
+if not frontend_url and os.getenv("VERCEL") == "1":
+    frontend_url = "https://vibeweave-ai.vercel.app"
+FRONTEND_URL = frontend_url or "http://localhost:5173"
 CORS(app, supports_credentials=True, origins=[FRONTEND_URL])
+
+spotify_redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+if not spotify_redirect_uri:
+    spotify_redirect_uri = f"{FRONTEND_URL}/api/spotify/callback"
+SPOTIFY_REDIRECT_URI = spotify_redirect_uri
+
+print(f"[Moodwave] FRONTEND_URL={FRONTEND_URL}")
+print(f"[Moodwave] SPOTIFY_REDIRECT_URI={SPOTIFY_REDIRECT_URI}")
 
 # ================= DB =================
 db_url = os.getenv('DATABASE_URL') or os.getenv('POSTGRES_URL')
@@ -136,13 +147,21 @@ def me(user):
 @require_auth
 def spotify_auth_url(user):
     if not spotify_is_configured():
-        return error_response("Spotify not configured", 400)
+        return error_response(
+            f"Spotify not configured. Ensure SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are set. Expected redirect URI: {SPOTIFY_REDIRECT_URI}",
+            400
+        )
 
     state = f"{user.id}::{secrets.token_urlsafe(16)}"
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
+    url = build_spotify_auth_url(SPOTIFY_REDIRECT_URI, state)
+    if not url:
+        return error_response(
+            "Spotify auth URL could not be generated. Check SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, and SPOTIFY_REDIRECT_URI.",
+            500
+        )
 
-    url = build_spotify_auth_url(redirect_uri, state)
-    return jsonify({"status": "success", "url": url})
+    app.logger.info(f"Spotify auth URL created for user {user.id} with redirect URI {SPOTIFY_REDIRECT_URI}")
+    return jsonify({"status": "success", "url": url, "redirect_uri": SPOTIFY_REDIRECT_URI})
 
 
 @app.route("/api/spotify/callback")
@@ -159,9 +178,7 @@ def spotify_callback():
     try:
         user_id, _ = state.split("::", 1)
 
-        redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI")
-
-        token_payload = exchange_code_for_tokens(code, redirect_uri)
+        token_payload = exchange_code_for_tokens(code, SPOTIFY_REDIRECT_URI)
 
         display_name = None
         try:

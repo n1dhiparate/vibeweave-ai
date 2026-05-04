@@ -28,10 +28,21 @@ function App() {
     localStorage.setItem('mw_v', v);
     setVisitCtr(String(v).padStart(6, '0'));
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const initSession = async () => {
+      const { data: redirectData, error: redirectError } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+      if (redirectError) {
+        console.error('Supabase redirect session error:', redirectError.message);
+      } else if (redirectData?.session) {
+        setSession(redirectData.session);
+        fetchMe(redirectData.session);
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session) fetchMe(session);
-    });
+    };
+
+    initSession();
 
     const {
       data: { subscription },
@@ -137,12 +148,26 @@ function App() {
 
   const handleRegister = async () => {
     setError(null);
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) showErr(error.message);
-    else {
-        showErr("Success! You are now registered and logged in ♡");
-        triggerBurst();
+    const redirectUrl = window.location.origin;
+    const { data, error } = await supabase.auth.signUp(
+      { email, password },
+      { emailRedirectTo: redirectUrl }
+    );
+
+    if (error) {
+      showErr(error.message);
+      return;
     }
+
+    if (data?.session) {
+      setSession(data.session);
+      fetchMe(data.session);
+      showErr('Success! You are now registered and logged in ♡');
+      triggerBurst();
+      return;
+    }
+
+    showErr('Registration successful! Check your email to confirm and complete login.');
   };
 
   const handleLogin = async () => {
@@ -160,9 +185,15 @@ function App() {
   const connectSpotify = async () => {
     try {
       const data = await appApi('/api/spotify/auth-url');
+      if (data.redirect_uri) {
+        console.log('Spotify redirect URI:', data.redirect_uri);
+      }
       window.location.href = data.url;
     } catch (e) {
-      showErr(e.message);
+      const message = e.message.includes('redirect uri')
+        ? `${e.message}. Make sure the Spotify callback URI is registered exactly as https://vibeweave-ai.vercel.app/api/spotify/callback.`
+        : e.message;
+      showErr(message);
     }
   };
 

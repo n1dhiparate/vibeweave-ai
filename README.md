@@ -123,6 +123,9 @@ This repository is configured for Vercel with the following deployment setup:
 5. Set your Spotify callback URI to:
    `https://vibeweave-ai.vercel.app/api/spotify/callback`
 
+> In your Spotify Developer Dashboard, whitelist the callback exactly as:
+> `https://vibeweave-ai.vercel.app/api/spotify/callback`
+
 ---
 
 ## Project Structure

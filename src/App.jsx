@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 
-const API = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:5000');
+const API = 'http://127.0.0.1:5000';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -29,14 +29,6 @@ function App() {
     setVisitCtr(String(v).padStart(6, '0'));
 
     const initSession = async () => {
-      const { data: redirectData, error: redirectError } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-      if (redirectError) {
-        console.error('Supabase redirect session error:', redirectError.message);
-      } else if (redirectData?.session) {
-        setSession(redirectData.session);
-        fetchMe(redirectData.session);
-      }
-
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
       if (session) fetchMe(session);
@@ -58,12 +50,14 @@ function App() {
     const urlParams = new URLSearchParams(window.location.search);
     const spotifyParam = urlParams.get('spotify');
     if (spotifyParam === 'connected') {
-      showErr('spotify connected !! your next playlist will use your library');
-      window.history.replaceState({}, document.title, '/');
-    } else if (spotifyParam && spotifyParam.startsWith('error')) {
-      showErr('spotify connection failed. check your redirect uri and try again');
-      window.history.replaceState({}, document.title, '/');
-    }
+  showErr('spotify connected !! your next playlist will use your library');
+
+  supabase.auth.getSession().then(({ data: { session } }) => {
+    if (session) fetchMe(session);
+  });
+
+  window.history.replaceState({}, document.title, '/');
+}
 
     return () => subscription.unsubscribe();
   }, []);
@@ -110,18 +104,34 @@ function App() {
   };
 
   const appApi = async (path, opts = {}) => {
-    const headers = { 'Content-Type': 'application/json' };
-    if (session) {
-      headers['Authorization'] = `Bearer ${session.access_token}`;
-    }
-    const r = await fetch(`${API}${path}`, {
-      ...opts,
-      headers: { ...headers, ...(opts.headers || {}) }
-    });
-    const j = await r.json().catch(()=>({status:'error', message:'bad server response'}));
-    if (!r.ok || j.status === 'error') throw new Error(j.message || 'something went wrong :(');
-    return j;
-  };
+  const headers = { 'Content-Type': 'application/json' };
+
+  if (session) {
+    headers['Authorization'] = `Bearer ${session.access_token}`;
+  }
+
+  const r = await fetch(`${API}${path}`, {
+    ...opts,
+    cache: 'no-store',
+    headers: { ...headers, ...(opts.headers || {}) }
+  });
+
+  const text = await r.text();
+  console.log('RAW RESPONSE:', text);
+
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    throw new Error(`Non-JSON response: ${text}`);
+  }
+
+  if (!r.ok || j.status === 'error') {
+    throw new Error(j.message || 'something went wrong :(');
+  }
+
+  return j;
+};
 
   const fetchMe = async (activeSession) => {
     try {

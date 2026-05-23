@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
 
-const API = 'http://127.0.0.1:5000';
+const API = window.location.origin;
 
 function App() {
   const [session, setSession] = useState(null);
